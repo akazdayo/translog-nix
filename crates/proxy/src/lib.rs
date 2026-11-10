@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use axum::{
     Router,
     extract::{Path, State},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -33,12 +34,11 @@ async fn proxy_narinfo(
         .strip_suffix(".narinfo")
         .ok_or_else(|| anyhow!("invalid request"))?;
     check_hash(hash)?;
-    let response = s
-        .client
-        .get(s.log.join(&file)?)
-        .send()
-        .await?
-        .error_for_status()?;
+    let response = s.client.get(s.log.join(&file)?).send().await?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+    let response = response.error_for_status()?;
     let upstream = response
         .headers()
         .get("x-translog-upstream")

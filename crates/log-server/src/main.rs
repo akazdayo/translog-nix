@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use axum::{
     Router,
     extract::{Path, Query, State},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -46,14 +47,17 @@ fn parse_observation(raw: &str, hash: &str, keys: &[TrustedPublicKey]) -> Result
     }
     Ok((path, info.nar_hash().to_sri_string()))
 }
-async fn fetch_observation(s: &LogState, hash: &str) -> Result<(String, String, String)> {
+async fn fetch_observation(s: &LogState, hash: &str) -> Result<Option<(String, String, String)>> {
     check_hash(hash)?;
     let response = s
         .client
         .get(s.upstream.join(&format!("{hash}.narinfo"))?)
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = response.error_for_status()?;
     if response.content_length().is_some_and(|n| n > 1024 * 1024) {
         bail!("narinfo too large");
     }
@@ -63,11 +67,12 @@ async fn fetch_observation(s: &LogState, hash: &str) -> Result<(String, String, 
     }
     let raw = String::from_utf8(bytes.to_vec())?;
     let (path, nar_hash) = parse_observation(&raw, hash, &s.keys)?;
-    Ok((raw, path, nar_hash))
+    Ok(Some((raw, path, nar_hash)))
 }
-async fn observe(s: &LogState, hash: &str) -> Result<()> {
+async fn observe(s: &LogState, hash: &str) -> Result<bool> {
     let (raw, path, nar_hash) = match fetch_observation(s, hash).await {
-        Ok(v) => v,
+        Ok(Some(v)) => v,
+        Ok(None) => return Ok(false),
         Err(e) => {
             s.errors.fetch_add(1, Ordering::Relaxed);
             return Err(e);
@@ -94,7 +99,7 @@ async fn observe(s: &LogState, hash: &str) -> Result<()> {
             .as_secs(),
         Ordering::Relaxed,
     );
-    Ok(())
+    Ok(true)
 }
 async fn baseline(s: &LogState, hash: &str) -> Result<Option<String>> {
     Ok(sqlx::query_scalar("SELECT o.narinfo FROM baselines b JOIN observations o ON o.id = b.observation_id WHERE b.cache_id = ? AND b.store_hash = ?")
@@ -108,7 +113,9 @@ async fn log_narinfo(State(s): State<LogState>, Path(file): Path<String>) -> App
     let raw = match baseline(&s, hash).await? {
         Some(raw) => raw,
         None => {
-            observe(&s, hash).await?;
+            if !observe(&s, hash).await? {
+                return Ok(StatusCode::NOT_FOUND.into_response());
+            }
             baseline(&s, hash)
                 .await?
                 .ok_or_else(|| anyhow!("baseline missing"))?
@@ -171,6 +178,9 @@ async fn log_proxy_narinfo(State(s): State<LogState>, path: Path<String>) -> App
         .ok_or_else(|| anyhow!("invalid request"))?
         .to_owned();
     let mut resp = log_narinfo(State(s.clone()), path).await?;
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(resp);
+    }
     let endpoint: String = sqlx::query_scalar("SELECT o.endpoint FROM baselines b JOIN observations o ON o.id=b.observation_id WHERE b.cache_id=? AND b.store_hash=?")
         .bind(&s.cache_id).bind(hash).fetch_one(&s.db).await?;
     resp.headers_mut()
@@ -235,8 +245,13 @@ async fn main() -> Result<()> {
                 Ok(hashes) => {
                     bg.pending.store(hashes.len() as u64, Ordering::Relaxed);
                     for hash in hashes {
-                        if let Err(e) = observe(&bg, &hash).await {
-                            eprintln!("reobservation {hash}: {e:#}");
+                        match observe(&bg, &hash).await {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                bg.errors.fetch_add(1, Ordering::Relaxed);
+                                eprintln!("reobservation {hash}: upstream narinfo not found");
+                            }
+                            Err(e) => eprintln!("reobservation {hash}: {e:#}"),
                         }
                         bg.pending.fetch_sub(1, Ordering::Relaxed);
                     }
@@ -288,7 +303,7 @@ mod tests {
     async fn observation_freezes_first_signed_value_and_records_changes() {
         let (first, key) = signed("sha256:1fm3wgw7wsx66fhyzi90l1avyn89qpa4fkz7064sb61j5xy8kx65");
         let (second, _) = signed("sha256:0fm3wgw7wsx66fhyzi90l1avyn89qpa4fkz7064sb61j5xy8kx65");
-        let content = Arc::new(RwLock::new(first.clone()));
+        let content = Arc::new(RwLock::new((StatusCode::NOT_FOUND, String::new())));
         let app = Router::new().route(
             "/{file}",
             get({
@@ -336,6 +351,36 @@ mod tests {
             tokio::spawn(async move { axum::serve(proxy_listener, proxy_app).await.unwrap() });
         let client = reqwest::Client::new();
         let url = format!("http://{proxy_addr}/{HASH}.narinfo");
+        let log_url = format!("http://{log_addr}/{HASH}.narinfo");
+        assert_eq!(
+            client.get(&log_url).send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            client.get(&url).send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+        assert!(baseline(&state, HASH).await.unwrap().is_none());
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM observations")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(state.errors.load(Ordering::Relaxed), 0);
+
+        *content.write().await = (StatusCode::INTERNAL_SERVER_ERROR, String::new());
+        assert_eq!(
+            client.get(&url).send().await.unwrap().status(),
+            StatusCode::BAD_GATEWAY
+        );
+        *content.write().await = (StatusCode::OK, first.replace("Sig: test:", "Sig: wrong:"));
+        assert_eq!(
+            client.get(&url).send().await.unwrap().status(),
+            StatusCode::BAD_GATEWAY
+        );
+        assert!(baseline(&state, HASH).await.unwrap().is_none());
+
+        *content.write().await = (StatusCode::OK, first.clone());
         let served = client
             .get(&url)
             .send()
@@ -348,7 +393,13 @@ mod tests {
             .unwrap();
         assert!(served.contains(&format!("URL: http://{addr}/nar/example.nar")));
         assert!(served.contains("Sig: test:"));
-        *content.write().await = second.clone();
+        *content.write().await = (StatusCode::NOT_FOUND, String::new());
+        assert!(!observe(&state, HASH).await.unwrap());
+        assert_eq!(
+            client.get(&url).send().await.unwrap().text().await.unwrap(),
+            served
+        );
+        *content.write().await = (StatusCode::OK, second.clone());
         observe(&state, HASH).await.unwrap();
         assert_eq!(baseline(&state, HASH).await.unwrap().unwrap(), first);
         let served_after = client
@@ -368,14 +419,14 @@ mod tests {
                 .unwrap()
                 .contains("translog_nar_hash_mismatches_total 1")
         );
-        *content.write().await = second.replace("Sig: test:", "Sig: wrong:");
+        *content.write().await = (StatusCode::OK, second.replace("Sig: test:", "Sig: wrong:"));
         assert!(observe(&state, HASH).await.is_err());
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM observations")
             .fetch_one(&state.db)
             .await
             .unwrap();
         assert_eq!(count, 2);
-        assert_eq!(state.errors.load(Ordering::Relaxed), 1);
+        assert_eq!(state.errors.load(Ordering::Relaxed), 3);
         server.abort();
         log_server.abort();
         proxy_server.abort();
