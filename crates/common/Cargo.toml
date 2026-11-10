@@ -1,0 +1,9 @@
+[package]
+name = "translog-common"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+url.workspace = true
