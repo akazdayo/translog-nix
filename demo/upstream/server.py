@@ -12,6 +12,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def serve(self, send_body):
         try:
+            if self.path.startswith('/nar/tampered-') and Path('/control/tamper').exists():
+                body = b'HACKED!\n'
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                if send_body:
+                    self.wfile.write(body)
+                return
             method = 'HEAD' if not send_body and not self.path.endswith('.narinfo') else 'GET'
             request = Request('https://cache.nixos.org' + self.path, method=method)
             with urlopen(request, timeout=30) as response:

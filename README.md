@@ -81,19 +81,22 @@ docker compose run --rm client copy --from http://proxy:8081 "$STORE_PATH"
 
 最初の取得では、Proxy が上流から NarInfo を取得して返し、Observer に非同期で記録を依頼します。[Transparency Log UI](http://localhost:18084/) を更新し、hello とその依存のエントリーが表示されるまで待ってください。Proxy のログ同期間隔は5秒です。UI に現れたあと、さらに5秒待ってから次に進みます。UI はチェックポイントの署名、ログの全エントリー、および前回のチェックポイントからの追記整合性を検証して表示します。
 
-上流の NarInfo の `URL` を存在しない場所にすり替え、上流と Proxy の応答を比較します。
+上流の NarInfo の `URL` を、`HACKED!` を返す偽物にすり替え、上流と Proxy の応答を比較します。
 
 ```sh
 docker compose exec upstream touch /control/tamper
 curl -f "http://localhost:18083/$HASH.narinfo" | grep '^URL:'
 curl -f "http://localhost:18081/$HASH.narinfo" | grep '^URL:'
-# 上流を直接使うと存在しない NAR を取得しようとして失敗する
+# 上流が指す偽物の中身を表示する
+ATTACK_URL=$(curl -fsS "http://localhost:18083/$HASH.narinfo" | sed -n 's/^URL: //p')
+curl -f "http://localhost:18083/$ATTACK_URL"
+# 上流を直接使うと偽物を取得し、Nix の検証で失敗する
 docker compose run --rm client copy --from http://upstream:8083 "$STORE_PATH"
 # 新しいクライアントでも、記録済みの URL により取得が成功する
 docker compose run --rm client copy --from http://proxy:8081 "$STORE_PATH"
 docker compose exec upstream rm -f /control/tamper
 ```
 
-記録済みの場合、Proxy は最初に記録された URL を返すため、`tampered-` が含まれません。Proxy は差異の通知を行いません。未記録の hash では上流の値が返る場合があります。このデモは NarInfo の URL の改変を示すもので、NAR 本体の改変や初回取得時の差異検出を示すものではありません。URL は Nix の署名対象に含まれません。Proxy が返す NAR の URL はコンテナネットワーク内の `upstream` を指すため、取得には上記の client コンテナを使ってください。
+記録済みの場合、Proxy は最初に記録された URL を返すため、`tampered-` が含まれません。Proxy は差異の通知を行いません。未記録の hash では上流の値が返る場合があります。偽物の中身はデモ用の文字列であり、実行可能なパッケージではありません。Nix は偽物を検証で拒否するため、通常のパッケージ実行結果として HACKED! が表示されるわけではありません。初回取得時の差異検出も行いません。URL は Nix の署名対象に含まれません。Proxy が返す NAR の URL はコンテナネットワーク内の `upstream` を指すため、取得には上記の client コンテナを使ってください。
 
 全サービスの動作ログは `docker compose logs -f`、特定サービスは `docker compose logs -f proxy` などで確認できます。UI は Transparency Log の全エントリーを表示します。終了は `docker compose down`、デモの記録と鍵を含む初期化は `docker compose down -v` です。
