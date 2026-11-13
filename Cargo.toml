@@ -12,7 +12,6 @@ axum = "0.8"
 nix-narinfo = "0.4"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 serde = { version = "1", features = ["derive"] }
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync", "process", "fs"] }
 url = "2"
 translog-common = { path = "crates/common" }

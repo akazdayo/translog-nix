@@ -1,70 +1,68 @@
 # translog-nix
 
-Nix バイナリキャッシュの NarInfo を観測し、最初の有効な署名付き NarInfo を固定するプロトタイプです。上流の再観測結果を SQLite に記録し、固定した NarInfo を Nix 向けプロキシから返します。目的と信頼境界は [設計書](specs/design.md) を参照してください。
+Nix バイナリキャッシュの NarInfo を Observer が観測し、Tessera の Transparency Log に記録するプロトタイプです。Proxy は Nix の substituter として動き、署名と整合性を検証してローカルに同期したログから、最初の有効な NarInfo を基準として返します。対象が未記録の場合は上流から取得して返し、Observer に非同期で観測を依頼します。[設計書](specs/design.md) も参照してください。
+
+## 開発環境とビルド
+
+`nix develop` で Rust と Go の開発環境に入ります。
+
+```sh
+cargo build --release --workspace
+(cd transparency-log && go build -o ../target/translog-transparency .)
+(cd transparency-log && go build -o ../target/translog-sync ./cmd/sync)
+```
 
 ## 起動
 
-Rust と C コンパイラを用意し、`cargo build --release --workspace` でビルドします。以下は cache.nixos.org を対象にした例です。
+まず Transparency Log の鍵を作り、表示された `Private:` と `Public:` の値をそれぞれ別のファイルに保存します。秘密鍵とログデータは継続して保持します。
+
+```sh
+./target/translog-transparency -generate-key
+./target/translog-transparency -private-key /path/to/private-key -storage /path/to/log-data
+```
+
+次に Observer と Proxy をそれぞれ起動します。下記では両方が同じ上流を観測し、同じ Nix 公開鍵を信頼します。
 
 ```sh
 export TRANSLOG_PUBLIC_KEYS='cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY='
 ./target/release/translog-log-server
 ```
 
-別の端末でプロキシを起動します。
-
 ```sh
+export TRANSLOG_PUBLIC_KEYS='cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY='
+export TRANSLOG_LOG_PUBLIC_KEY_FILE=/path/to/public-key
+export TRANSLOG_SYNC_COMMAND="$PWD/target/translog-sync"
 ./target/release/translog-proxy
 ```
 
-### NixOS module
+Nix の substituter に `http://127.0.0.1:8081` を、trusted-public-keys に上流の公開鍵を設定します。Nix daemon を使う場合、設定と Proxy への接続は daemon 側から有効である必要があります。
 
-このリポジトリの `nix/modules` を import すると、ログサーバーとプロキシをそれぞれ systemd サービスとして有効にできます。例えば、このリポジトリを `./translog-nix` に配置した場合は次のように設定します。
+## 環境変数
 
-```nix
-{
-  imports = [ ./translog-nix/nix/modules ];
+URL は HTTP(S) で末尾を `/` にします。
 
-  services.translog-nix = {
-    logServer = {
-      enable = true;
-      publicKeys = [
-        "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-      ];
-    };
-    proxy.enable = true;
-  };
-}
-```
-
-ログサーバーのみ、またはプロキシのみを別々のホストで有効化できます。`logServer.listen`、`upstream`、`cacheId`、`publicKeys`、`reobserveSeconds` と、`proxy.listen`、`logUrl` を変更できます。`package` で使用するパッケージを上書きできます。ログサーバーの DB は systemd が管理する `/var/lib/translog-nix/translog.sqlite` に保存されます。module は Nix の substituter や trusted-public-keys、ファイアウォールを変更しません。
-
-デフォルトではログサーバーが `127.0.0.1:8080`、プロキシが `127.0.0.1:8081` で待ち受けます。Nix の substituter に `http://127.0.0.1:8081` を設定し、上流の公開鍵を Nix の trusted-public-keys に設定します。複数 substituter やフォールバックは本プロトタイプの対象外です。Nix daemon を使う場合、これらの設定とプロキシへの接続は daemon 側から有効である必要があります。
-
-## 設定
-
-環境変数で設定します。URL は `http` または `https` で、末尾を `/` にします。
-
-| 環境変数 | 用途 | デフォルト |
+| 変数 | 用途 | デフォルト |
 | --- | --- | --- |
-| `TRANSLOG_LISTEN` | 待受アドレス | log: `127.0.0.1:8080`、proxy: `127.0.0.1:8081` |
-| `TRANSLOG_UPSTREAM` | 上流キャッシュの URL | `https://cache.nixos.org/` |
-| `TRANSLOG_CACHE_ID` | 上流を識別する文字列 | 上流 URL |
-| `TRANSLOG_PUBLIC_KEYS` | 信頼する Nix 公開鍵。複数の場合は空白区切り | 必須 |
-| `TRANSLOG_DATABASE` | SQLite ファイルのパス | `translog.sqlite` |
-| `TRANSLOG_REOBSERVE_SECONDS` | 全登録対象の再観測開始間隔。正の整数秒 | `3600` |
-| `TRANSLOG_LOG_URL` | プロキシが参照するログサーバー URL | `http://127.0.0.1:8080/` |
+| `TRANSLOG_LISTEN` | 待受アドレス | Observer: `127.0.0.1:8080`、Proxy: `127.0.0.1:8081` |
+| `TRANSLOG_UPSTREAM` | 観測・配信する上流 URL | `https://cache.nixos.org/` |
+| `TRANSLOG_PUBLIC_KEYS` | NarInfo の検証に使う Nix 公開鍵。空白区切り | 必須 |
+| `TRANSLOG_TRANSPARENCY_URL` | Transparency Log のベース URL | `http://127.0.0.1:8082/` |
+| `TRANSLOG_OBSERVER_URL` | Proxy が観測を依頼する Observer の URL | `http://127.0.0.1:8080/` |
+| `TRANSLOG_LOG_PUBLIC_KEY_FILE` | Proxy がチェックポイントの検証に使う公開鍵ファイル | 必須 |
+| `TRANSLOG_SYNC_COMMAND` | Tessera 同期コマンド | `translog-sync` |
+| `TRANSLOG_SNAPSHOT` | 検証済みログの保存先 | `translog-snapshot.json` |
+| `TRANSLOG_SYNC_SECONDS` | Proxy のログ同期間隔 | `3600` |
 
-１つのログサーバープロセスは１つの上流を対象とします。同じ `TRANSLOG_CACHE_ID` は同じキャッシュについてのみ使ってください。初回観測時のエンドポイントは基準とともに保持されます。DB は基準と観測履歴を含むため、SQLite の WAL を含めて整合性の取れた方法でバックアップしてください。
+Transparency Log は Tessera のエントリー形式に合わせ、1件あたり 65,535 バイト以下のデータを受け付けます。
 
-## 観測と監視
+Observer は `POST /observe/<store-path-hash>` で観測を受け付け、NarInfo の署名と対象を検証したうえで `POST /add` に観測を記録します。Transparency Log は `GET /checkpoint` と `/tile/`、`/entries/` を公開します。
 
-- `GET /<store-path-hash>.narinfo`: 基準がなければ上流から取得・署名検証・記録し、基準を返します。基準があれば上流を問い合わせずに返します。
-- `GET /observations?after=0`: 記録順の観測を JSON で最大 1,000 件返します。続きを取得するには最後の `id` を `after` に指定します。`baseline` が初回基準かを示します。
-- `GET /metrics`: 基準数、基準と異なるハッシュの観測回数、観測エラー数、再観測の残件数、最後の観測成功時刻を返します。
+同期コマンドはログの全エントリーを取得してルートハッシュを再計算し、チェックポイントの署名と、前回保存したチェックポイントに対する追記の整合性を検証します。成功したスナップショットのみを保存します。Proxy は記録の NarInfo の署名も検証し、同じ上流と store path の最初の有効な記録を使います。起動時は保存済みスナップショットを検証してから利用します。現状、同期のたびに全件を再取得するため、ログの成長に伴い通信量と処理時間が増加します。
 
-未登録の NarInfo を上流が 404 で返した場合、ログサーバーとプロキシも 404 を返します。このキャッシュミスでは基準を作成せず、観測エラーも加算しません。登録済みの NarInfo が後に上流から消えた場合は、固定された基準を引き続き返し、再観測時にはエラーとして記録します。
+ログに対象がないときは Proxy が上流から NarInfo を取得し、Observer への依頼完了を待たずに返します。依頼の再送キューはありません。初回に返した内容と後でログに記録された内容の差は当面検出・通知しません。同期に失敗した場合は直前の検証済みスナップショットを引き続き使用し、対象がなければ上流から取得します。
 
-同じ不一致を繰り返し観測すると、その都度履歴と不一致カウンターに加算されます。基準数と不一致回数は DB から計算し、エラー数と最終成功時刻はプロセス再起動時にリセットされます。再観測の間隔は各巡回の開始を基準とし、対象が多いと上流への問い合わせ負荷と履歴の増加が生じます。
+Transparency Log の追記 API と Observer の観測 API に認証はありません。外部公開する場合は別途アクセス制御と TLS を設定してください。チェックポイント検証はログが利用者ごとに異なる履歴を示すことを単独では検出できません。NAR 本体の保存や、上流が削除した NAR の提供も行いません。
 
-初回の取得や署名検証に失敗した場合、基準は作成されずリクエストは失敗します。現時点では署名検証に失敗した NarInfo の本文は履歴に保存せず、エラー件数として記録します。NAR が変更・削除されれば、固定した NarInfo を使う取得は失敗し得ます。プロキシとログサーバーは信頼して運用してください。履歴は公開できますが、現段階では改ざんを暗号学的に検証する transparency log の証明機能はありません。ログ API に認証機能はないため、公開する場合は別途アクセス制御や TLS を設定してください。
+## NixOS module
+
+`nix/modules` を import し、Observer の `services.translog-nix.logServer` と Proxy の `services.translog-nix.proxy` をそれぞれ有効にできます。両方に `publicKeys` を設定し、Proxy の `logPublicKeyFile` に Transparency Log 公開鍵のパスを指定してください。`upstream` と `transparencyUrl` は両サービスで揃えます。`observerUrl`、`syncSeconds` と各 `listen` も変更できます。Transparency Log は別途起動してください。module は Nix の substituter、trusted-public-keys、ファイアウォールを変更しません。

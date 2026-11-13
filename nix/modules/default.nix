@@ -45,21 +45,16 @@ in
         default = "https://cache.nixos.org/";
         description = "観測対象のキャッシュ URL。末尾に / が必要。";
       };
-      cacheId = mkOption {
-        type = types.nullOr types.str;
-        default = null;
-        description = "キャッシュの識別子。null の場合は上流 URL を使う。";
-      };
       publicKeys = mkOption {
         type = types.listOf types.str;
         default = [ ];
         example = [ "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=" ];
         description = "NarInfo の署名検証に信頼する Nix 公開鍵。";
       };
-      reobserveSeconds = mkOption {
-        type = types.ints.positive;
-        default = 3600;
-        description = "再観測の開始間隔（秒）。";
+      transparencyUrl = mkOption {
+        type = types.str;
+        default = "http://127.0.0.1:8082/";
+        description = "Transparency Log の URL。";
       };
     };
 
@@ -70,10 +65,34 @@ in
         default = "127.0.0.1:8081";
         description = "プロキシの待受アドレスとポート。";
       };
-      logUrl = mkOption {
+      upstream = mkOption {
+        type = types.str;
+        default = "https://cache.nixos.org/";
+        description = "観測対象の上流キャッシュ URL。";
+      };
+      observerUrl = mkOption {
         type = types.str;
         default = "http://127.0.0.1:8080/";
-        description = "利用するログサーバーの URL。末尾に / が必要。";
+        description = "観測を依頼する Observer の URL。";
+      };
+      transparencyUrl = mkOption {
+        type = types.str;
+        default = "http://127.0.0.1:8082/";
+        description = "Transparency Log の URL。";
+      };
+      publicKeys = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = "NarInfo の署名検証に使う公開鍵。";
+      };
+      logPublicKeyFile = mkOption {
+        type = types.str;
+        description = "Transparency Log の公開鍵ファイル。";
+      };
+      syncSeconds = mkOption {
+        type = types.ints.positive;
+        default = 3600;
+        description = "ログ同期の開始間隔（秒）。";
       };
     };
   };
@@ -86,8 +105,8 @@ in
           message = "services.translog-nix.logServer.publicKeys に信頼する公開鍵を指定してください。";
         }
         {
-          assertion = validUrl log.upstream;
-          message = "services.translog-nix.logServer.upstream は / で終わる HTTP(S) URL である必要があります。";
+          assertion = validUrl log.upstream && validUrl log.transparencyUrl;
+          message = "services.translog-nix.logServer の URL は / で終わる HTTP(S) URL である必要があります。";
         }
       ];
       systemd.services.translog-nix-log-server = {
@@ -99,13 +118,10 @@ in
           TRANSLOG_LISTEN = log.listen;
           TRANSLOG_UPSTREAM = log.upstream;
           TRANSLOG_PUBLIC_KEYS = lib.concatStringsSep " " log.publicKeys;
-          TRANSLOG_DATABASE = "/var/lib/translog-nix/translog.sqlite";
-          TRANSLOG_REOBSERVE_SECONDS = toString log.reobserveSeconds;
-        }
-        // lib.optionalAttrs (log.cacheId != null) { TRANSLOG_CACHE_ID = log.cacheId; };
+          TRANSLOG_TRANSPARENCY_URL = log.transparencyUrl;
+        };
         serviceConfig = serviceSecurity // {
           ExecStart = lib.getExe' cfg.package "translog-log-server";
-          StateDirectory = "translog-nix";
           Restart = "on-failure";
         };
       };
@@ -113,8 +129,12 @@ in
     (mkIf proxy.enable {
       assertions = [
         {
-          assertion = validUrl proxy.logUrl;
-          message = "services.translog-nix.proxy.logUrl は / で終わる HTTP(S) URL である必要があります。";
+          assertion = validUrl proxy.observerUrl && validUrl proxy.upstream && validUrl proxy.transparencyUrl;
+          message = "services.translog-nix.proxy の URL は / で終わる HTTP(S) URL である必要があります。";
+        }
+        {
+          assertion = proxy.publicKeys != [ ];
+          message = "services.translog-nix.proxy.publicKeys に信頼する公開鍵を指定してください。";
         }
       ];
       systemd.services.translog-nix-proxy = {
@@ -124,10 +144,18 @@ in
         wants = [ "network-online.target" ];
         environment = {
           TRANSLOG_LISTEN = proxy.listen;
-          TRANSLOG_LOG_URL = proxy.logUrl;
+          TRANSLOG_UPSTREAM = proxy.upstream;
+          TRANSLOG_OBSERVER_URL = proxy.observerUrl;
+          TRANSLOG_TRANSPARENCY_URL = proxy.transparencyUrl;
+          TRANSLOG_PUBLIC_KEYS = lib.concatStringsSep " " proxy.publicKeys;
+          TRANSLOG_LOG_PUBLIC_KEY_FILE = proxy.logPublicKeyFile;
+          TRANSLOG_SNAPSHOT = "/var/lib/translog-nix-proxy/snapshot.json";
+          TRANSLOG_SYNC_COMMAND = lib.getExe' cfg.package "translog-sync";
+          TRANSLOG_SYNC_SECONDS = toString proxy.syncSeconds;
         };
         serviceConfig = serviceSecurity // {
           ExecStart = lib.getExe' cfg.package "translog-proxy";
+          StateDirectory = "translog-nix-proxy";
           Restart = "on-failure";
         };
       };

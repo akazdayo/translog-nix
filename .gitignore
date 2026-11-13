@@ -2,3 +2,6 @@
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+/transparency-data
+
+/translog-snapshot.json

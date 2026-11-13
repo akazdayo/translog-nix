@@ -1,33 +1,33 @@
-{
-  lib,
-  rustPlatform,
-  cmake,
-  pkg-config,
-}:
-rustPlatform.buildRustPackage {
-  pname = "translog-nix";
-  version = "0.1.0";
-
-  src = lib.fileset.toSource {
-    root = ../.;
-    fileset = lib.fileset.unions [
-      ../Cargo.toml
-      ../Cargo.lock
-      ../crates
-    ];
+{ lib, rustPlatform, buildGoModule, symlinkJoin, cmake, pkg-config }:
+let
+  rust = rustPlatform.buildRustPackage {
+    pname = "translog-nix-rust";
+    version = "0.1.0";
+    src = lib.fileset.toSource {
+      root = ../.;
+      fileset = lib.fileset.unions [ ../Cargo.toml ../Cargo.lock ../crates ];
+    };
+    cargoLock.lockFile = ../Cargo.lock;
+    nativeBuildInputs = [ cmake pkg-config ];
+    doCheck = false;
   };
-  cargoLock.lockFile = ../Cargo.lock;
-  nativeBuildInputs = [
-    cmake
-    pkg-config
-  ];
-
-  # The integration test starts local HTTP servers; Nix build sandboxes disallow
-  # network sockets. Run the workspace tests separately outside the sandbox.
-  doCheck = false;
-
+  tessera = buildGoModule {
+    pname = "translog-tessera";
+    version = "0.1.0";
+    src = ../transparency-log;
+    vendorHash = "sha256-fQy5UfcUa19z+6hySDoshd8ikAHlcKJfql3HpZKZ1+o=";
+    subPackages = [ "." "cmd/sync" ];
+    postInstall = ''
+      mv "$out/bin/transparency-log" "$out/bin/translog-transparency"
+      mv "$out/bin/sync" "$out/bin/translog-sync"
+    '';
+    doCheck = false;
+  };
+in symlinkJoin {
+  name = "translog-nix-0.1.0";
+  paths = [ rust tessera ];
   meta = {
-    description = "Observe and pin Nix binary cache NarInfo";
+    description = "Observe Nix binary caches with a transparency log";
     mainProgram = "translog-proxy";
     platforms = lib.platforms.linux;
   };

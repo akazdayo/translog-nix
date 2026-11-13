@@ -18,24 +18,26 @@ let
   proxyOnly = evaluate {
     services.translog-nix.proxy = {
       enable = true;
-      logUrl = "https://log.example/";
+      observerUrl = "https://log.example/";
+      publicKeys = [ "example:key" ];
+      logPublicKeyFile = "/tmp/log-public-key";
     };
   };
   both = evaluate {
     services.translog-nix.logServer = {
       enable = true;
       upstream = "https://cache.example/";
-      cacheId = "example";
       publicKeys = [ "example:key" ];
-      reobserveSeconds = 12;
     };
-    services.translog-nix.proxy.enable = true;
+    services.translog-nix.proxy = { enable = true; publicKeys = [ "example:key" ]; logPublicKeyFile = "/tmp/log-public-key"; };
   };
   noKeys = evaluate { services.translog-nix.logServer.enable = true; };
   invalidUrl = evaluate {
     services.translog-nix.proxy = {
       enable = true;
-      logUrl = "https://example";
+      observerUrl = "https://example";
+      publicKeys = [ "example:key" ];
+      logPublicKeyFile = "/tmp/log-public-key";
     };
   };
   failed =
@@ -46,13 +48,13 @@ let
 in
 assert !(proxyOnly.systemd.services ? translog-nix-log-server);
 assert
-  proxyOnly.systemd.services.translog-nix-proxy.environment.TRANSLOG_LOG_URL
+  proxyOnly.systemd.services.translog-nix-proxy.environment.TRANSLOG_OBSERVER_URL
   == "https://log.example/";
-assert both.systemd.services.translog-nix-log-server.environment.TRANSLOG_CACHE_ID == "example";
+assert both.systemd.services.translog-nix-log-server.environment.TRANSLOG_UPSTREAM == "https://cache.example/";
 assert
   both.systemd.services.translog-nix-log-server.environment.TRANSLOG_PUBLIC_KEYS == "example:key";
-assert both.systemd.services.translog-nix-log-server.environment.TRANSLOG_REOBSERVE_SECONDS == "12";
-assert both.systemd.services.translog-nix-log-server.serviceConfig.StateDirectory == "translog-nix";
+assert both.systemd.services.translog-nix-proxy.environment.TRANSLOG_SYNC_SECONDS == "3600";
+assert both.systemd.services.translog-nix-proxy.serviceConfig.StateDirectory == "translog-nix-proxy";
 assert both.systemd.services.translog-nix-log-server.serviceConfig.DynamicUser;
 assert failed both == [ ];
 assert builtins.length (failed noKeys) == 1;
