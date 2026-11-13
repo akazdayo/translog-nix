@@ -146,8 +146,12 @@ async fn proxy_narinfo(
     check_hash(hash)?;
     let saved = s.entries.read().await.get(hash).cloned();
     let raw = match saved {
-        Some(raw) => raw,
+        Some(raw) => {
+            eprintln!("narinfo {hash}: serving verified log entry");
+            raw
+        }
         None => {
+            eprintln!("narinfo {hash}: fetching from upstream and requesting observation");
             let response = s.client.get(s.upstream.join(&file)?).send().await?;
             if response.status() == StatusCode::NOT_FOUND {
                 return Ok(StatusCode::NOT_FOUND.into_response());

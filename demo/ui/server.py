@@ -3,8 +3,7 @@ import html
 import json
 import os
 import subprocess
-import tempfile
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -35,4 +34,4 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-ThreadingHTTPServer(('0.0.0.0', 8084), Handler).serve_forever()
+HTTPServer(('0.0.0.0', 8084), Handler).serve_forever()

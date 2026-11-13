@@ -1,0 +1,6 @@
+.git
+target
+transparency-data
+*.sqlite*
+translog-snapshot.json
+__pycache__

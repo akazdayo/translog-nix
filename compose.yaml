@@ -1,4 +1,8 @@
 services:
+  client:
+    image: nixos/nix:latest
+    profiles: [client]
+    entrypoint: [nix, --extra-experimental-features, nix-command]
   transparency:
     build:
       context: .
@@ -7,14 +11,14 @@ services:
     volumes:
       - keys:/keys
       - log-data:/data
-    ports: ["127.0.0.1:8082:8082"]
+    ports: ["127.0.0.1:18082:8082"]
   upstream:
     image: python:3.13-slim
     command: python -u /app/server.py
     volumes:
       - ./demo/upstream/server.py:/app/server.py:ro
       - control:/control
-    ports: ["127.0.0.1:8083:8083"]
+    ports: ["127.0.0.1:18083:8083"]
   observer:
     build:
       context: .
@@ -43,7 +47,7 @@ services:
       - keys:/keys:ro
       - proxy-data:/data
     depends_on: [transparency, observer]
-    ports: ["127.0.0.1:8081:8081"]
+    ports: ["127.0.0.1:18081:8081"]
     restart: on-failure
   ui:
     build:
@@ -55,7 +59,7 @@ services:
       - keys:/keys:ro
       - ui-data:/data
     depends_on: [transparency]
-    ports: ["127.0.0.1:8084:8084"]
+    ports: ["127.0.0.1:18084:8084"]
 volumes:
   keys:
   log-data:

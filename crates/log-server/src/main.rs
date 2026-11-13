@@ -76,6 +76,7 @@ async fn observe(State(s): State<Observer>, Path(hash): Path<String>) -> AppResu
         .send()
         .await?
         .error_for_status()?;
+    eprintln!("observed {hash}: appended to transparency log");
     Ok(StatusCode::NO_CONTENT)
 }
 #[tokio::main]

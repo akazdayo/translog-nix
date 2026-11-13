@@ -69,26 +69,31 @@ Transparency Log の追記 API と Observer の観測 API に認証はありま�
 
 ## 複数コンテナのデモ
 
-Docker と Compose、インターネット接続が必要です。デモ用の上流は cache.nixos.org を中継します。以下はプロジェクトのルートで実行します。
+Docker Compose とインターネット接続が必要です。上流コンテナは cache.nixos.org を中継し、Proxy、Observer、Transparency Log、独立した閲覧 UI をそれぞれ別のコンテナで動かします。以下はプロジェクトのルートで実行します。`docker compose` が使えず `docker-compose` がある環境では、以下のコマンドを読み替えてください。
 
 ```sh
 docker compose up --build -d
-# 任意の実在する store path hash を指定。例はローカルの Nix store から取得
-HASH=$(basename "$(nix path-info nixpkgs#hello)" | cut -d- -f1)
-curl -f "http://localhost:8081/$HASH.narinfo"
+# cache.nixos.org にある Linux 向け hello の例。実行はせず取得します。
+STORE_PATH=/nix/store/hwrycgha80xa6n743pfqa3s1wn4bakx7-hello-2.12.3
+HASH=${STORE_PATH##*/}; HASH=${HASH%%-*}
+docker compose run --rm client copy --from http://proxy:8081 "$STORE_PATH"
 ```
 
-数秒待って [Transparency Log UI](http://localhost:8084/) を更新し、エントリーが記録されたことを確認します。Proxy は5秒ごとにログを同期します。UI はチェックポイントの署名と全エントリーのハッシュを検証し、全件を表示します。
+最初の取得では、Proxy が上流から NarInfo を取得して返し、Observer に非同期で記録を依頼します。[Transparency Log UI](http://localhost:18084/) を更新し、hello とその依存のエントリーが表示されるまで待ってください。Proxy のログ同期間隔は5秒です。UI に現れたあと、さらに5秒待ってから次に進みます。UI はチェックポイントの署名、ログの全エントリー、および前回のチェックポイントからの追記整合性を検証して表示します。
 
-上流の NarInfo の `URL` をすり替え、上流と Proxy の応答を比較します。
+上流の NarInfo の `URL` を存在しない場所にすり替え、上流と Proxy の応答を比較します。
 
 ```sh
 docker compose exec upstream touch /control/tamper
-curl -f "http://localhost:8083/$HASH.narinfo" | grep '^URL:'
-curl -f "http://localhost:8081/$HASH.narinfo" | grep '^URL:'
-docker compose exec upstream rm /control/tamper
+curl -f "http://localhost:18083/$HASH.narinfo" | grep '^URL:'
+curl -f "http://localhost:18081/$HASH.narinfo" | grep '^URL:'
+# 上流を直接使うと存在しない NAR を取得しようとして失敗する
+docker compose run --rm client copy --from http://upstream:8083 "$STORE_PATH"
+# 新しいクライアントでも、記録済みの URL により取得が成功する
+docker compose run --rm client copy --from http://proxy:8081 "$STORE_PATH"
+docker compose exec upstream rm -f /control/tamper
 ```
 
-記録済みの場合、Proxy は最初に記録された URL を返すため、`tampered-` が含まれません。未記録の hash では上流の値が返る場合があります。このデモは NarInfo の URL の改変を示すもので、NAR 本体の改変や初回取得時の差異検出を示すものではありません。URL は Nix の署名対象に含まれません。
+記録済みの場合、Proxy は最初に記録された URL を返すため、`tampered-` が含まれません。Proxy は差異の通知を行いません。未記録の hash では上流の値が返る場合があります。このデモは NarInfo の URL の改変を示すもので、NAR 本体の改変や初回取得時の差異検出を示すものではありません。URL は Nix の署名対象に含まれません。Proxy が返す NAR の URL はコンテナネットワーク内の `upstream` を指すため、取得には上記の client コンテナを使ってください。
 
-各コンテナの標準出力は `docker compose logs -f`、特定サービスは `docker compose logs -f proxy` などで確認できます。UI は Transparency Log の全エントリーを表示します。終了は `docker compose down`、デモの記録と鍵を含む初期化は `docker compose down -v` です。
+全サービスの動作ログは `docker compose logs -f`、特定サービスは `docker compose logs -f proxy` などで確認できます。UI は Transparency Log の全エントリーを表示します。終了は `docker compose down`、デモの記録と鍵を含む初期化は `docker compose down -v` です。
