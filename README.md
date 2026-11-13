@@ -66,3 +66,29 @@ Transparency Log の追記 API と Observer の観測 API に認証はありま�
 ## NixOS module
 
 `nix/modules` を import し、Observer の `services.translog-nix.logServer` と Proxy の `services.translog-nix.proxy` をそれぞれ有効にできます。両方に `publicKeys` を設定し、Proxy の `logPublicKeyFile` に Transparency Log 公開鍵のパスを指定してください。`upstream` と `transparencyUrl` は両サービスで揃えます。`observerUrl`、`syncSeconds` と各 `listen` も変更できます。Transparency Log は別途起動してください。module は Nix の substituter、trusted-public-keys、ファイアウォールを変更しません。
+
+## 複数コンテナのデモ
+
+Docker と Compose、インターネット接続が必要です。デモ用の上流は cache.nixos.org を中継します。以下はプロジェクトのルートで実行します。
+
+```sh
+docker compose up --build -d
+# 任意の実在する store path hash を指定。例はローカルの Nix store から取得
+HASH=$(basename "$(nix path-info nixpkgs#hello)" | cut -d- -f1)
+curl -f "http://localhost:8081/$HASH.narinfo"
+```
+
+数秒待って [Transparency Log UI](http://localhost:8084/) を更新し、エントリーが記録されたことを確認します。Proxy は5秒ごとにログを同期します。UI はチェックポイントの署名と全エントリーのハッシュを検証し、全件を表示します。
+
+上流の NarInfo の `URL` をすり替え、上流と Proxy の応答を比較します。
+
+```sh
+docker compose exec upstream touch /control/tamper
+curl -f "http://localhost:8083/$HASH.narinfo" | grep '^URL:'
+curl -f "http://localhost:8081/$HASH.narinfo" | grep '^URL:'
+docker compose exec upstream rm /control/tamper
+```
+
+記録済みの場合、Proxy は最初に記録された URL を返すため、`tampered-` が含まれません。未記録の hash では上流の値が返る場合があります。このデモは NarInfo の URL の改変を示すもので、NAR 本体の改変や初回取得時の差異検出を示すものではありません。URL は Nix の署名対象に含まれません。
+
+各コンテナの標準出力は `docker compose logs -f`、特定サービスは `docker compose logs -f proxy` などで確認できます。UI は Transparency Log の全エントリーを表示します。終了は `docker compose down`、デモの記録と鍵を含む初期化は `docker compose down -v` です。
