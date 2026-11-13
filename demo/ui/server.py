@@ -23,11 +23,15 @@ class Handler(BaseHTTPRequestHandler):
                 content += '<p class="empty">エントリーはまだありません。</p>'
             for index, entry in enumerate(entries):
                 raw = base64.b64decode(entry).decode('utf-8', errors='replace')
+                label = ''
                 try:
-                    raw = json.dumps(json.loads(raw), ensure_ascii=False, indent=2)
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict) and isinstance(parsed.get('store_path'), str):
+                        label = ' — ' + html.escape(parsed['store_path'])
+                    raw = json.dumps(parsed, ensure_ascii=False, indent=2)
                 except ValueError:
                     pass
-                content += '<details><summary>エントリー ' + str(index) + '</summary><pre>' + html.escape(raw) + '</pre></details>'
+                content += '<details><summary>エントリー ' + str(index) + label + '</summary><pre>' + html.escape(raw) + '</pre></details>'
             content += '<h2 class="checkpoint-heading">署名付きチェックポイント</h2><pre class="checkpoint">' + html.escape(base64.b64decode(snapshot['checkpoint']).decode('utf-8', errors='replace')) + '</pre>'
         body = ('''<!doctype html>
 <html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

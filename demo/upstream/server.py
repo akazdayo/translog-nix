@@ -12,10 +12,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def serve(self, send_body):
         try:
-            if self.path.startswith('/nar/tampered-') and Path('/control/tamper').exists():
-                body = b'HACKED!\n'
+            attack = Path('/attack')
+            if (Path('/control/tamper').exists()
+                and (self.path == '/nar/attack.nar' or (self.path.count('/') == 1 and self.path.endswith('.narinfo')))):
+                target = attack / ('attack.nar' if self.path == '/nar/attack.nar' else self.path[1:])
+            else:
+                target = None
+            if target is not None and target.is_file():
+                body = target.read_bytes()
                 self.send_response(200)
-                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.send_header('Content-Type', 'application/octet-stream')
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
                 if send_body:
@@ -27,8 +33,6 @@ class Handler(BaseHTTPRequestHandler):
                 body = response.read()
                 content_type = response.headers.get('Content-Type', 'application/octet-stream')
                 length = response.headers.get('Content-Length') if method == 'HEAD' else None
-            if self.path.endswith('.narinfo') and Path('/control/tamper').exists():
-                body = body.replace(b'URL: nar/', b'URL: nar/tampered-', 1)
             self.send_response(200)
             self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', length or str(len(body)))

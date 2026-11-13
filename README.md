@@ -69,34 +69,44 @@ Transparency Log の追記 API と Observer の観測 API に認証はありま�
 
 ## 複数コンテナのデモ
 
-Docker Compose とインターネット接続が必要です。上流コンテナは cache.nixos.org を中継し、Proxy、Observer、Transparency Log、独立した閲覧 UI をそれぞれ別のコンテナで動かします。以下はプロジェクトのルートで実行します。`docker compose` が使えず `docker-compose` がある環境では、以下のコマンドを読み替えてください。
+正規の flake をビルド・実行する際、substituter が nixpkgs のコンパイラを偽物にすり替えるデモです。上流コンテナは cache.nixos.org を中継し、Proxy、Observer、Transparency Log、独立した閲覧 UI は別々のコンテナで動きます。Docker Compose とインターネット接続が必要です。コマンドはプロジェクトのルートで実行します。`docker compose` の代わりに `docker-compose` を使う環境では読み替えてください。
+
+### 1. 準備と通常動作
 
 ```sh
 docker compose up --build -d
-# cache.nixos.org にある Linux 向け hello の例。実行はせず取得します。
-STORE_PATH=/nix/store/hwrycgha80xa6n743pfqa3s1wn4bakx7-hello-2.12.3
-HASH=${STORE_PATH##*/}; HASH=${HASH%%-*}
-docker compose run --rm client copy --from http://proxy:8081 "$STORE_PATH"
+docker compose exec upstream rm -f /control/tamper
+# 正規の GCC wrapper から、同じ store path を名乗る偽物を準備する
+docker compose run --rm --build prepare-attack
+# 正規コンパイラを Proxy 経由で取得し、正規 flake をビルド・実行する
+docker compose run --rm client run --option substituters http://proxy:8081 -L path:/demo#default
 ```
 
-最初の取得では、Proxy が上流から NarInfo を取得して返し、Observer に非同期で記録を依頼します。[Transparency Log UI](http://localhost:18084/) を更新し、hello とその依存のエントリーが表示されるまで待ってください。Proxy のログ同期間隔は5秒です。UI に現れたあと、さらに5秒待ってから次に進みます。UI はチェックポイントの署名、ログの全エントリー、および前回のチェックポイントからの追記整合性を検証して表示します。
+最後に `Hello from the legitimate program!` と表示されます。初回はコンパイラなどのダウンロードに時間がかかります。新しい client コンテナは毎回独立した Nix store を使うので、後の比較でも実際に substituter から取得してビルドします。
 
-上流の NarInfo の `URL` を、`HACKED!` を返す偽物にすり替え、上流と Proxy の応答を比較します。
+[Transparency Log UI](http://localhost:18084/) を更新し、`gcc-wrapper` のエントリーが表示されたことを確認します。Proxy は5秒ごとにログを同期するので、表示されたあとさらに5秒待ちます。正規の値を先に記録・同期することが、このデモの前提です。
+
+### 2. 偽コンパイラを提供する
 
 ```sh
 docker compose exec upstream touch /control/tamper
-curl -f "http://localhost:18083/$HASH.narinfo" | grep '^URL:'
-curl -f "http://localhost:18081/$HASH.narinfo" | grep '^URL:'
-# 上流が指す偽物の中身を表示する
-ATTACK_URL=$(curl -fsS "http://localhost:18083/$HASH.narinfo" | sed -n 's/^URL: //p')
-curl -f "http://localhost:18083/$ATTACK_URL"
-# 上流を直接使うと偽物を取得し、Nix の検証で失敗する
-docker compose run --rm client copy --from http://upstream:8083 "$STORE_PATH"
-# 新しいクライアントでも、記録済みの URL により取得が成功する
-docker compose run --rm client copy --from http://proxy:8081 "$STORE_PATH"
+# 偽コンパイラを返す上流を直接使い、同じ flake をビルド・実行する
+docker compose run --rm client run --option substituters http://upstream:8083 -L path:/demo#default
+```
+
+最後の標準出力が `HACKED! HACKED! HACKED!` に変わります。flake や C ソースは変更していません。偽の GCC wrapper が C の `puts` を書き換えるヘッダーをコンパイル時に挿入し、ビルドされたプログラムの動作を変えています。
+
+### 3. Proxy 経由で同じビルドを比較する
+
+```sh
+# すり替えは有効のまま、別のクライアントから同じ flake を実行する
+docker compose run --rm client run --option substituters http://proxy:8081 -L path:/demo#default
+# 終わったら通常状態に戻す
 docker compose exec upstream rm -f /control/tamper
 ```
 
-記録済みの場合、Proxy は最初に記録された URL を返すため、`tampered-` が含まれません。Proxy は差異の通知を行いません。未記録の hash では上流の値が返る場合があります。偽物の中身はデモ用の文字列であり、実行可能なパッケージではありません。Nix は偽物を検証で拒否するため、通常のパッケージ実行結果として HACKED! が表示されるわけではありません。初回取得時の差異検出も行いません。URL は Nix の署名対象に含まれません。Proxy が返す NAR の URL はコンテナネットワーク内の `upstream` を指すため、取得には上記の client コンテナを使ってください。
+Proxy 経由では、ログから同期した正規の NarInfo を使うため、再び `Hello from the legitimate program!` と表示されます。Proxy は上流との差異を通知しません。UI は署名付きチェックポイントと全エントリーを検証して表示します。全サービスの動作ログは `docker compose logs -f`、特定サービスは `docker compose logs -f proxy` などで確認できます。
 
-全サービスの動作ログは `docker compose logs -f`、特定サービスは `docker compose logs -f proxy` などで確認できます。UI は Transparency Log の全エントリーを表示します。終了は `docker compose down`、デモの記録と鍵を含む初期化は `docker compose down -v` です。
+この攻撃は **信頼済みのデモ専用キャッシュ鍵が侵害された想定**です。偽物にはデモ鍵で正しい署名を付け、Nix は署名とハッシュを通常どおり検証します。cache.nixos.org の署名鍵を使ったり、Nix の署名検証を無効にしたりはしません。デモ鍵はリポジトリに公開されており、実環境では使えません。正規の値が記録される前にすり替えられた場合、現在の仕組みはそれを防げません。また、正規の NAR が上流から提供されなくなる場合も復旧できません。
+
+終了は `docker compose down`。デモの記録と鍵を含む初期化は `docker compose down -v` です。Proxy が返す NAR の URL は Compose 内の `upstream` を指すため、取得には client コンテナを使ってください。
