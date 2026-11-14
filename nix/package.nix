@@ -1,4 +1,4 @@
-{ lib, rustPlatform, buildGoModule, symlinkJoin, cmake, pkg-config }:
+{ lib, rustPlatform, buildGoModule, symlinkJoin, cmake, pkg-config, aws-lc }:
 let
   rust = rustPlatform.buildRustPackage {
     pname = "translog-nix-rust";
@@ -9,13 +9,14 @@ let
     };
     cargoLock.lockFile = ../Cargo.lock;
     nativeBuildInputs = [ cmake pkg-config ];
+    buildInputs = [ aws-lc ];
     doCheck = false;
   };
   tessera = buildGoModule {
     pname = "translog-tessera";
     version = "0.1.0";
     src = ../transparency-log;
-    vendorHash = "sha256-fQy5UfcUa19z+6hySDoshd8ikAHlcKJfql3HpZKZ1+o=";
+    vendorHash = "sha256-Tysq/TCsaJw9QTCoVFjIuL2XxQFf4S2rMwZO63AgLEk=";
     subPackages = [ "." "cmd/sync" ];
     postInstall = ''
       mv "$out/bin/transparency-log" "$out/bin/translog-transparency"

@@ -4,7 +4,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 RUN cargo build --release --workspace
 
-FROM golang:1.27.3-bookworm AS go-build
+FROM golang:1.27.4-bookworm AS go-build
 WORKDIR /src
 COPY transparency-log/go.mod transparency-log/go.sum ./
 RUN go mod download
