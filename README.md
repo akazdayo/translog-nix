@@ -75,5 +75,6 @@ Transparency Log の追記 API と Observer の観測 API に認証はありま�
 2. [コンパイラのすり替え](demo/attack.md)
 3. [Proxy による回避](demo/protection.md)
 4. [Transparency Log UI と各コンテナのログ](demo/logs.md)
+5. [最初から不正だった場合](demo/first-observation-attacked.md)
 
 Docker Compose とインターネット接続が必要です。Proxy が返す NAR の URL は Compose 内の `upstream` を指すため、取得には各手順にある client コンテナを使ってください。

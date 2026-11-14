@@ -22,4 +22,14 @@ docker compose logs -f observer
 
 Proxy のログでは上流から取得したか、検証済みログのエントリーを返したかを確認できます。Observer は観測を記録したときに出力します。各コンテナのログと Transparency Log のエントリーは別のものです。
 
+## ログを初期化する
+
+デモを最初からやり直すには、リポジトリのルートで実行します。
+
+```sh
+./demo/reset-log.sh
+```
+
+サービスを一度停止して Transparency Log の全エントリーと Proxy・UI の検証済みスナップショットを消し、`tamper` を解除して再起動します。ログ署名鍵と偽コンパイラは残ります。コンテナの標準出力ログは消去しません。この操作は記録を復元できないため、必要な内容は先に保存してください。[最初から不正だった場合のデモ](first-observation-attacked.md)にも使えます。
+
 終了するときは `docker compose down` を実行します。`docker compose down -v` はデモの記録と鍵を含むボリュームを削除します。

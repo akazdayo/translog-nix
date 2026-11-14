@@ -1,4 +1,14 @@
 services:
+  reset-log:
+    image: python:3.13-slim
+    profiles: [maintenance]
+    command: [python, /tools/reset-log.py]
+    volumes:
+      - ./demo/reset-log.py:/tools/reset-log.py:ro
+      - log-data:/reset/log
+      - proxy-data:/reset/proxy
+      - ui-data:/reset/ui
+      - control:/reset/control
   client:
     image: nixos/nix:latest
     profiles: [client]

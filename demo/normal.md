@@ -4,6 +4,8 @@
 
 Docker Compose とインターネット接続が必要です。すべてのコマンドはリポジトリのルートで実行します。`docker compose` の代わりに `docker-compose` を使う環境では読み替えてください。
 
+以前に不正な値をログに記録した場合は、先に `./demo/reset-log.sh` でログを初期化してください。[ログを初期化する](logs.md#ログを初期化する)を参照してください。
+
 ```sh
 docker compose up --build -d
 docker compose exec upstream rm -f /control/tamper
