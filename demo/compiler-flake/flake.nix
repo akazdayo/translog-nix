@@ -13,12 +13,9 @@
           version = "1";
           meta.mainProgram = "hello";
           dontUnpack = true;
+          src = ./hello.c;
           buildPhase = ''
-            cat > hello.c <<'SOURCE'
-            #include <stdio.h>
-            int main(void) { puts("Hello from the legitimate program!"); return 0; }
-            SOURCE
-            cc hello.c -o hello
+            cc "$src" -o hello
           '';
           installPhase = ''
             mkdir -p "$out/bin"
