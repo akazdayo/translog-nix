@@ -1,0 +1,94 @@
+services:
+  reset-log:
+    image: python:3.13-slim
+    profiles: [maintenance]
+    command: [python, /tools/reset-log.py]
+    volumes:
+      - ./demo/reset-log.py:/tools/reset-log.py:ro
+      - log-data:/reset/log
+      - proxy-data:/reset/proxy
+      - ui-data:/reset/ui
+      - control:/reset/control
+  client:
+    image: nixos/nix:latest
+    profiles: [client]
+    entrypoint: [nix, --extra-experimental-features, "nix-command flakes"]
+    environment:
+      NIX_CONFIG: |
+        trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= demo-compromised-1:knTdxQqQEO9GzgIWe+f0miMv0PB37szTwIWqNSup8OY=
+        sandbox = false
+    volumes:
+      - ./demo/compiler-flake:/demo:ro
+  prepare-attack:
+    profiles: [setup]
+    build:
+      context: .
+      dockerfile: demo/attack/Dockerfile
+    volumes:
+      - ./demo/compiler-flake:/demo:ro
+      - attack-data:/attack
+  transparency:
+    build:
+      context: .
+      dockerfile: demo/Dockerfile
+    command: start-log
+    volumes:
+      - keys:/keys
+      - log-data:/data
+    ports: ["127.0.0.1:18082:8082"]
+  upstream:
+    image: python:3.13-slim
+    command: python -u /app/server.py
+    volumes:
+      - ./demo/upstream/server.py:/app/server.py:ro
+      - control:/control
+      - attack-data:/attack:ro
+    ports: ["127.0.0.1:18083:8083"]
+  observer:
+    build:
+      context: .
+      dockerfile: demo/Dockerfile
+    command: translog-log-server
+    environment: &common
+      TRANSLOG_LISTEN: 0.0.0.0:8080
+      TRANSLOG_UPSTREAM: http://upstream:8083/
+      TRANSLOG_TRANSPARENCY_URL: http://transparency:8082/
+      TRANSLOG_PUBLIC_KEYS: 'cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= demo-compromised-1:knTdxQqQEO9GzgIWe+f0miMv0PB37szTwIWqNSup8OY='
+    depends_on: [transparency, upstream]
+  proxy:
+    build:
+      context: .
+      dockerfile: demo/Dockerfile
+    command: translog-proxy
+    environment:
+      <<: *common
+      TRANSLOG_LISTEN: 0.0.0.0:8081
+      TRANSLOG_OBSERVER_URL: http://observer:8080/
+      TRANSLOG_LOG_PUBLIC_KEY_FILE: /keys/public
+      TRANSLOG_SYNC_COMMAND: /usr/local/bin/sync
+      TRANSLOG_SNAPSHOT: /data/snapshot.json
+      TRANSLOG_SYNC_SECONDS: 5
+    volumes:
+      - keys:/keys:ro
+      - proxy-data:/data
+    depends_on: [transparency, observer]
+    ports: ["127.0.0.1:18081:8081"]
+    restart: on-failure
+  ui:
+    build:
+      context: .
+      dockerfile: demo/ui/Dockerfile
+    environment:
+      LOG_URL: http://transparency:8082/
+    volumes:
+      - keys:/keys:ro
+      - ui-data:/data
+    depends_on: [transparency]
+    ports: ["127.0.0.1:18084:8084"]
+volumes:
+  keys:
+  log-data:
+  proxy-data:
+  ui-data:
+  control:
+  attack-data:

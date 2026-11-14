@@ -66,3 +66,15 @@ Transparency Log の追記 API と Observer の観測 API に認証はありま�
 ## NixOS module
 
 `nix/modules` を import し、Observer の `services.translog-nix.logServer` と Proxy の `services.translog-nix.proxy` をそれぞれ有効にできます。両方に `publicKeys` を設定し、Proxy の `logPublicKeyFile` に Transparency Log 公開鍵のパスを指定してください。`upstream` と `transparencyUrl` は両サービスで揃えます。`observerUrl`、`syncSeconds` と各 `listen` も変更できます。Transparency Log は別途起動してください。module は Nix の substituter、trusted-public-keys、ファイアウォールを変更しません。
+
+## 複数コンテナのデモ
+
+正規の flake をビルド・実行する際、substituter が nixpkgs のコンパイラを偽物にすり替えるデモです。手順は `demo/` に分けています。
+
+1. [通常動作と準備](demo/normal.md)
+2. [コンパイラのすり替え](demo/attack.md)
+3. [Proxy による回避](demo/protection.md)
+4. [Transparency Log UI と各コンテナのログ](demo/logs.md)
+5. [最初から不正だった場合](demo/first-observation-attacked.md)
+
+Docker Compose とインターネット接続が必要です。Proxy が返す NAR の URL は Compose 内の `upstream` を指すため、取得には各手順にある client コンテナを使ってください。
